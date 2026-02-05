@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>บันทึกเบิกค่าเดินทาง (v1.2.9)</title>
+    <title>บันทึกเบิกค่าเดินทาง (v1.2.9 - Fixed)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -31,13 +31,13 @@
     <script type="text/babel">
         const { useState, useEffect } = React;
 
-        // --- CONFIGURATION (ระบุค่าเดิมของคุณที่นี่) ---
+        // --- CONFIGURATION ---
         const GAS_URL = "https://script.google.com/macros/s/AKfycbzhjsb5vsMocgzrKlh9Pek1Umnd_JykvLLNKn_PyretDwDT62hItVeOaEXKz1aPyitVMA/exec"; 
         const LIFF_ID = "2009016720-ddygK2Jx";
         const FIX_RATE = 4;
         const DELIVERY_FIX_RATE = 150; 
 
-        // Icons ฉบับเต็ม (Full SVG Paths) กู้คืนจากต้นฉบับ
+        // Icons ฉบับเต็ม กู้คืนจากต้นฉบับ 100%
         const Icons = {
             Car: (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12v4c0 .6.4 1 1 1h2"/><circle cx="7" cy="17" r="2"/><path d="M9 17h6"/><circle cx="17" cy="17" r="2"/></svg>,
             Loader: (props) => <svg {...props} className={props.className + " animate-spin"} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>,
@@ -63,7 +63,6 @@
             const [approvers, setApprovers] = useState([]);
 
             useEffect(() => {
-                // ดึงรายชื่อผู้อนุมัติแยกจาก LIFF ทันที
                 const fetchApprovers = async () => {
                     try {
                         const res = await fetch(`${GAS_URL}?action=getInitialData`);
@@ -84,7 +83,8 @@
                             }));
                         } else { liff.login(); }
                     } catch (err) {
-                        console.error("LIFF Init Error:", err);
+                        console.error("LIFF Error:", err);
+                        // หากมี Error ไม่ต้องสั่งล้างค่า requester_name เพื่อให้ชื่อที่โหลดค้างไว้ไม่หาย
                     }
                 };
 
@@ -109,34 +109,63 @@
                 
                 setLoading(true);
                 let fileData = null;
+                let fileName = null;
+
                 if (selectedFile) {
                     const reader = new FileReader();
                     fileData = await new Promise(resolve => {
                         reader.onload = (ev) => resolve(ev.target.result);
                         reader.readAsDataURL(selectedFile);
                     });
+                    fileName = selectedFile.name;
                 }
 
+                // เตรียมข้อมูลที่จะส่ง (Payload)
                 const payload = {
                     ...formData,
                     delivery_fee: deliveryFee,
                     mileage_amount: mileageAmount,
                     total_amount: totalAmount,
                     update_datetime: new Date().toLocaleString('th-TH'),
-                    fileData: fileData
+                    fileData: fileData,
+                    fileName: fileName
                 };
 
                 try {
+                    // แก้ไข: ส่ง payload ไปตรงๆ ไม่ต้องหุ้ม Wrapper เพื่อให้ Code.gs รับค่าได้ครบ
                     const response = await fetch(GAS_URL, {
                         method: 'POST',
-                        body: JSON.stringify({ action: "processData", data: payload })
+                        body: JSON.stringify(payload) 
                     });
                     const result = await response.json();
                     
                     if (result.success) {
-                        alert("บันทึกข้อมูลเรียบร้อยแล้ว! (Ref: " + result.recordId + ")");
-                        if (liff.isInClient()) liff.closeWindow();
-                        else window.location.reload();
+                        alert("บันทึกข้อมูลเรียบร้อยแล้ว! (Ref: " + (result.recordId || "Success") + ")");
+                        if (liff.isInClient()) {
+                            // ส่งข้อความสรุปกลับเข้า LINE (ถ้าเปิดในแอป LINE)
+                            const summaryText = 
+                                `✅ บันทึกเบิกค่าเดินทางสำเร็จ\n` +
+                                `━━━━━━━━━━━━━━\n` +
+                                `👤 ผู้เบิก: ${payload.requester_name}\n` +
+                                `🚗 ทะเบียน: ${payload.license_plate}\n` +
+                                `📅 วันที่: ${payload.request_date}\n` +
+                                `📍 Site งาน: ${payload.site_name}\n` +
+                                `📝 รายละเอียด: ${payload.travel_details}\n` +
+                                `🛣️ ระยะทาง: ${payload.distance_km} กม.\n` +
+                                `🎫 ค่าทางด่วน: ${payload.toll_fee} ฿\n` +
+                                `🅿️ ค่าที่จอด: ${payload.parking_fee} ฿\n` +
+                                `📦 ค่ารถ: ${deliveryFee} ฿\n` +
+                                `✅ ผู้อนุมัติ: ${payload.approver}\n` +
+                                `━━━━━━━━━━━━━━\n` +
+                                `💰 ยอดสุทธิ: ${payload.total_amount.toLocaleString()} ฿`;
+                            
+                            try {
+                                await liff.sendMessages([{ type: 'text', text: summaryText }]);
+                            } catch (e) { console.error("Send Message Error", e); }
+                            liff.closeWindow();
+                        } else {
+                            window.location.reload();
+                        }
                     } else { throw new Error(result.error); }
                 } catch (err) {
                     alert("เกิดข้อผิดพลาด: " + err.message);
@@ -154,7 +183,7 @@
                         </div>
                         <div>
                             <h1 className="text-lg font-bold text-slate-800 leading-none">เบิกค่าเดินทาง</h1>
-                            <span className="text-[10px] text-slate-400 uppercase font-bold tracking-widest tracking-tight">System v1.2.9 Stable</span>
+                            <span className="text-[10px] text-slate-400 uppercase font-bold tracking-widest tracking-tight">System v1.2.9 Fixed</span>
                         </div>
                     </div>
 
@@ -251,7 +280,7 @@
                                 </div>
                             </div>
 
-                            {/* [ใหม่ v1.2.9] ช่องเลือกผู้อนุมัติ วางก่อนปุ่มบันทึก */}
+                            {/* ช่องเลือกผู้อนุมัติ (บังคับเลือกก่อนบันทึก) */}
                             <div className="pt-2 border-t border-slate-100">
                                 <label className="text-[10px] font-black text-blue-700 mb-1 block uppercase flex items-center gap-1">
                                     <Icons.User className="w-3 h-3" /> ส่งขออนุมัติไปยัง
