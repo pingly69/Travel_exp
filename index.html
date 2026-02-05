@@ -143,7 +143,7 @@
                     const result = await response.json();
                     
                     if (result.success) {
-                        alert("บันทึกข้อมูลเรียบร้อยแล้ว! (Ref: " + (result.recordId || "Success") + ")");
+                   //     alert("บันทึกข้อมูลเรียบร้อยแล้ว! (Ref: " + (result.recordId || "Success") + ")");
                         if (liff.isInClient()) {
                             // ส่งข้อความสรุปกลับเข้า LINE (ถ้าเปิดในแอป LINE)
                             const summaryText = 
