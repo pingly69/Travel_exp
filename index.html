@@ -6,7 +6,7 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
-    <title>บันทึกเบิกค่าเดินทาง (v1.3.0 - Integrated Approval UID)</title>
+    <title>บันทึกเบิกค่าเดินทาง (v1.4.0)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -32,13 +32,12 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect } = React;
+        const { useState, useEffect, useMemo } = React;
 
-        // --- CONFIGURATION ---
-        const GAS_URL = "https://script.google.com/macros/s/AKfycbzhjsb5vsMocgzrKlh9Pek1Umnd_JykvLLNKn_PyretDwDT62hItVeOaEXKz1aPyitVMA/exec"; 
+        const GAS_URL = "https://script.google.com/macros/s/AKfycbw9CvHT1NXH_o7Qmmd1Gnbikt4QKmtBO2jrC8VIF2a_cm5-WfLym0YpQYSbT2WiezUO/exec"; 
         const LIFF_ID = "2009016720-ddygK2Jx";
-        const FIX_RATE = 4;
         const DELIVERY_FIX_RATE = 150; 
+        const DEFAULT_FIX_RATE = 4;
 
         const Icons = {
             Car: (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12v4c0 .6.4 1 1 1h2"/><circle cx="7" cy="17" r="2"/><path d="M9 17h6"/><circle cx="17" cy="17" r="2"/></svg>,
@@ -58,42 +57,75 @@
                 team_name: '', site_name: '', travel_details: '',
                 origin: '', destination: '', trip_type: 'เที่ยวเดียว',
                 distance_km: 0, toll_fee: 0, parking_fee: 0,
-                has_delivery: false, line_user_id: '', approver: '' 
+                has_delivery: false, line_user_id: '', approver: '',
+                group_car: 1 // default group
             });
             const [selectedFile, setSelectedFile] = useState(null);
             const [loading, setLoading] = useState(false);
             const [approvers, setApprovers] = useState([]);
+            const [rateCard, setRateCard] = useState([]);
+
+            // Logic 2: ค้นหา Rate จาก Memory ตาม Effective Date และ Group
+            const currentFixRate = useMemo(() => {
+                if (rateCard.length === 0) return DEFAULT_FIX_RATE;
+                
+                const targetDate = new Date(formData.request_date).getTime();
+                // หาแถวที่วันที่น้อยกว่าหรือเท่ากับ และเป็นแถวที่ใหม่ที่สุด (Effective Date Logic)
+                const applicableRates = rateCard
+                    .filter(r => r.date <= targetDate)
+                    .sort((a, b) => b.date - a.date); // เรียงจากใหม่ไปเก่า
+
+                if (applicableRates.length > 0) {
+                    const row = applicableRates[0];
+                    return formData.group_car === 2 ? row.rateG2 : row.rateG1;
+                }
+                
+                return DEFAULT_FIX_RATE;
+            }, [formData.request_date, formData.group_car, rateCard]);
 
             useEffect(() => {
-                const fetchApprovers = async () => {
-                    try {
-                        const res = await fetch(`${GAS_URL}?action=getInitialData`);
-                        const result = await res.json();
-                        if (result.success) setApprovers(result.approvers);
-                    } catch (e) { console.error("Fetch Error:", e); }
-                };
-
-                const initLiff = async () => {
+                const initLiffAndData = async () => {
                     try {
                         await liff.init({ liffId: LIFF_ID });
                         if (liff.isLoggedIn()) {
                             const profile = await liff.getProfile();
-                            setFormData(prev => ({ 
-                                ...prev, 
-                                requester_name: profile.displayName,
-                                line_user_id: profile.userId
-                            }));
+                            
+                            // ดึงข้อมูล Initial Data พร้อม Profile จาก Server
+                            const res = await fetch(`${GAS_URL}?action=getInitialData&userId=${profile.userId}`);
+                            const result = await res.json();
+                            
+                            if (result.success) {
+                                setApprovers(result.approvers);
+                                setRateCard(result.rateCard);
+
+                                // Logic 1: หากเจอ Profile ใน Sheet ให้ใช้ค่าจาก Sheet แทน Profile เดิม
+                                if (result.userProfile) {
+                                    setFormData(prev => ({ 
+                                        ...prev, 
+                                        requester_name: result.userProfile.name || profile.displayName,
+                                        license_plate: result.userProfile.plate || '',
+                                        group_car: result.userProfile.group || 1,
+                                        line_user_id: profile.userId
+                                    }));
+                                } else {
+                                    setFormData(prev => ({ 
+                                        ...prev, 
+                                        requester_name: profile.displayName,
+                                        line_user_id: profile.userId
+                                    }));
+                                }
+                            }
                         } else { liff.login(); }
                     } catch (err) {
-                        console.error("LIFF Error:", err);
+                        console.error("LIFF/Data Error:", err);
                     }
                 };
 
-                fetchApprovers();
-                initLiff();
+                initLiffAndData();
             }, []);
 
-            const mileageAmount = Number(formData.distance_km) * FIX_RATE;
+            // การคำนวณยอดเงินตาม Dynamic Rate
+            const mileageAmount = Number(formData.distance_km) * currentFixRate;
             const deliveryFee = formData.has_delivery ? DELIVERY_FIX_RATE : 0;
             const totalAmount = mileageAmount + Number(formData.toll_fee) + Number(formData.parking_fee) + deliveryFee;
 
@@ -139,7 +171,6 @@
                     const result = await response.json();
                     
                     if (result.success) {
-                      //     alert("บันทึกข้อมูลเรียบร้อยแล้ว! (Ref: " + (result.recordId || "Success") + ")");
                         if (liff.isInClient()) {
                             const summaryText = 
                                 `✅ บันทึกเบิกค่าเดินทางสำเร็จ\n` +
@@ -148,14 +179,9 @@
                                 `🚗 ทะเบียน: ${payload.license_plate}\n` +
                                 `📅 วันที่: ${payload.request_date}\n` +
                                 `📍 Site งาน: ${payload.site_name}\n` +
-                                `📝 รายละเอียด: ${payload.travel_details}\n` +
-                                `🛣️ ระยะทาง: ${payload.distance_km} กม.\n` +
-                                `🎫 ค่าทางด่วน: ${payload.toll_fee} ฿\n` +
-                                `🅿️ ค่าที่จอด: ${payload.parking_fee} ฿\n` +
-                                `📦 ค่ารถ: ${deliveryFee} ฿\n` +
-                                `✅ ผู้อนุมัติ: ${payload.approver}\n` +
-                                `━━━━━━━━━━━━━━\n` +
-                                `💰 ยอดสุทธิ: ${payload.total_amount.toLocaleString()} ฿`;
+                                `🛣️ ระยะทาง: ${payload.distance_km} กม. (x ${currentFixRate})\n` +
+                                `💰 ยอดสุทธิ: ${payload.total_amount.toLocaleString()} ฿\n` +
+                                `✅ ผู้อนุมัติ: ${payload.approver}`;
                             
                             try {
                                 await liff.sendMessages([{ type: 'text', text: summaryText }]);
@@ -180,7 +206,7 @@
                         </div>
                         <div>
                             <h1 className="text-lg font-bold text-slate-800 leading-none">เบิกค่าเดินทาง</h1>
-                            <span className="text-[10px] text-slate-400 uppercase font-bold tracking-widest tracking-tight">System v1.3.0</span>
+                            <span className="text-[10px] text-slate-400 uppercase font-bold tracking-widest tracking-tight">System v1.4.0 (Dynamic Rate)</span>
                         </div>
                     </div>
 
@@ -248,7 +274,9 @@
                                         </select>
                                     </div>
                                     <div>
-                                        <label className="text-[9px] font-bold text-blue-800 uppercase mb-1 block font-black">ระยะทาง (กม.)</label>
+                                        <label className="text-[9px] font-bold text-blue-800 uppercase mb-1 block font-black">
+                                            ระยะทาง (กม.) <span className="text-blue-500">@{currentFixRate}฿</span>
+                                        </label>
                                         <input type="number" value={formData.distance_km} onChange={e => setFormData({...formData, distance_km: e.target.value})} className="w-full p-2 border border-blue-200 rounded-lg text-center font-bold" />
                                     </div>
                                     <div>
