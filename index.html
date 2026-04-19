@@ -6,7 +6,7 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
-    <title>บันทึกเบิกค่าเดินทาง (v1.4.0)</title>
+    <title>บันทึกเบิกค่าเดินทาง (v1.4.1)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -36,6 +36,7 @@
 
         const GAS_URL = "https://script.google.com/macros/s/AKfycbw9CvHT1NXH_o7Qmmd1Gnbikt4QKmtBO2jrC8VIF2a_cm5-WfLym0YpQYSbT2WiezUO/exec"; 
         const LIFF_ID = "2009016720-ddygK2Jx";
+       
         const DELIVERY_FIX_RATE = 150; 
         const DEFAULT_FIX_RATE = 4;
 
@@ -58,28 +59,24 @@
                 origin: '', destination: '', trip_type: 'เที่ยวเดียว',
                 distance_km: 0, toll_fee: 0, parking_fee: 0,
                 has_delivery: false, line_user_id: '', approver: '',
-                group_car: 1 // default group
+                group_car: 1 
             });
             const [selectedFile, setSelectedFile] = useState(null);
             const [loading, setLoading] = useState(false);
             const [approvers, setApprovers] = useState([]);
             const [rateCard, setRateCard] = useState([]);
 
-            // Logic 2: ค้นหา Rate จาก Memory ตาม Effective Date และ Group
+            // [Requirement 2 - คงเดิม] Logic ค้นหา Rate จาก Memory
             const currentFixRate = useMemo(() => {
                 if (rateCard.length === 0) return DEFAULT_FIX_RATE;
-                
                 const targetDate = new Date(formData.request_date).getTime();
-                // หาแถวที่วันที่น้อยกว่าหรือเท่ากับ และเป็นแถวที่ใหม่ที่สุด (Effective Date Logic)
                 const applicableRates = rateCard
                     .filter(r => r.date <= targetDate)
-                    .sort((a, b) => b.date - a.date); // เรียงจากใหม่ไปเก่า
-
+                    .sort((a, b) => b.date - a.date);
                 if (applicableRates.length > 0) {
                     const row = applicableRates[0];
                     return formData.group_car === 2 ? row.rateG2 : row.rateG1;
                 }
-                
                 return DEFAULT_FIX_RATE;
             }, [formData.request_date, formData.group_car, rateCard]);
 
@@ -89,50 +86,68 @@
                         await liff.init({ liffId: LIFF_ID });
                         if (liff.isLoggedIn()) {
                             const profile = await liff.getProfile();
-                            
-                            // ดึงข้อมูล Initial Data พร้อม Profile จาก Server
                             const res = await fetch(`${GAS_URL}?action=getInitialData&userId=${profile.userId}`);
                             const result = await res.json();
-                            
                             if (result.success) {
                                 setApprovers(result.approvers);
                                 setRateCard(result.rateCard);
-
-                                // Logic 1: หากเจอ Profile ใน Sheet ให้ใช้ค่าจาก Sheet แทน Profile เดิม
+                                // [Requirement 1 - คงเดิม] ดึง Profile อัตโนมัติ
                                 if (result.userProfile) {
                                     setFormData(prev => ({ 
                                         ...prev, 
                                         requester_name: result.userProfile.name || profile.displayName,
                                         license_plate: result.userProfile.plate || '',
-                                        group_car: result.userProfile.group || 1,
+                                        group_car: Number(result.userProfile.group) || 1,
                                         line_user_id: profile.userId
                                     }));
                                 } else {
-                                    setFormData(prev => ({ 
-                                        ...prev, 
-                                        requester_name: profile.displayName,
-                                        line_user_id: profile.userId
-                                    }));
+                                    setFormData(prev => ({ ...prev, requester_name: profile.displayName, line_user_id: profile.userId }));
                                 }
                             }
                         } else { liff.login(); }
-                    } catch (err) {
-                        console.error("LIFF/Data Error:", err);
-                    }
+                    } catch (err) { console.error("LIFF/Data Error:", err); }
                 };
-
                 initLiffAndData();
             }, []);
 
-            // การคำนวณยอดเงินตาม Dynamic Rate
+            // [ใหม่ v1.4.1] Helper Function: บีบอัดรูปภาพฝั่ง Client
+            const compressImage = (file) => {
+                return new Promise((resolve) => {
+                    const reader = new FileReader();
+                    reader.readAsDataURL(file);
+                    reader.onload = (event) => {
+                        const img = new Image();
+                        img.src = event.target.result;
+                        img.onload = () => {
+                            const canvas = document.createElement('canvas');
+                            let width = img.width;
+                            let height = img.height;
+                            const max_size = 1024; // จำกัดขนาดด้านที่ยาวที่สุด
+
+                            if (width > height) {
+                                if (width > max_size) { height *= max_size / width; width = max_size; }
+                            } else {
+                                if (height > max_size) { width *= max_size / height; height = max_size; }
+                            }
+
+                            canvas.width = width;
+                            canvas.height = height;
+                            const ctx = canvas.getContext('2d');
+                            ctx.drawImage(img, 0, 0, width, height);
+                            // บีบอัดเป็น JPEG คุณภาพ 0.7 (70%)
+                            resolve(canvas.toDataURL('image/jpeg', 0.7));
+                        };
+                    };
+                });
+            };
+
             const mileageAmount = Number(formData.distance_km) * currentFixRate;
             const deliveryFee = formData.has_delivery ? DELIVERY_FIX_RATE : 0;
             const totalAmount = mileageAmount + Number(formData.toll_fee) + Number(formData.parking_fee) + deliveryFee;
 
             const handleFileChange = (e) => {
                 const file = e.target.files[0];
-                if (file && file.size <= 5 * 1024 * 1024) { setSelectedFile(file); } 
-                else if (file) { alert("ไฟล์ต้องมีขนาดไม่เกิน 5MB"); e.target.value = null; }
+                if (file) { setSelectedFile(file); } 
             };
 
             const handleSubmit = async (e) => {
@@ -145,12 +160,9 @@
                 let fileName = null;
 
                 if (selectedFile) {
-                    const reader = new FileReader();
-                    fileData = await new Promise(resolve => {
-                        reader.onload = (ev) => resolve(ev.target.result);
-                        reader.readAsDataURL(selectedFile);
-                    });
-                    fileName = selectedFile.name;
+                    // [แก้ไข v1.4.1] ใช้ compressImage แทนการอ่านไฟล์ตรงๆ
+                    fileData = await compressImage(selectedFile);
+                    fileName = selectedFile.name.replace(/\.[^/.]+$/, "") + ".jpg"; // เปลี่ยนนามสกุลเป็น .jpg
                 }
 
                 const payload = {
@@ -178,24 +190,14 @@
                                 `👤 ผู้เบิก: ${payload.requester_name}\n` +
                                 `🚗 ทะเบียน: ${payload.license_plate}\n` +
                                 `📅 วันที่: ${payload.request_date}\n` +
-                                `📍 Site งาน: ${payload.site_name}\n` +
-                                `🛣️ ระยะทาง: ${payload.distance_km} กม. (x ${currentFixRate})\n` +
+                                `🛣️ ระยะทาง: ${payload.distance_km} กม. (x ${currentFixRate}฿)\n` +
                                 `💰 ยอดสุทธิ: ${payload.total_amount.toLocaleString()} ฿\n` +
                                 `✅ ผู้อนุมัติ: ${payload.approver}`;
-                            
-                            try {
-                                await liff.sendMessages([{ type: 'text', text: summaryText }]);
-                            } catch (e) { console.error("Send Message Error", e); }
+                            try { await liff.sendMessages([{ type: 'text', text: summaryText }]); } catch (e) { }
                             liff.closeWindow();
-                        } else {
-                            window.location.reload();
-                        }
+                        } else { window.location.reload(); }
                     } else { throw new Error(result.error); }
-                } catch (err) {
-                    alert("เกิดข้อผิดพลาด: " + err.message);
-                } finally {
-                    setLoading(false);
-                }
+                } catch (err) { alert("เกิดข้อผิดพลาด: " + err.message); } finally { setLoading(false); }
             };
 
             return (
@@ -206,7 +208,7 @@
                         </div>
                         <div>
                             <h1 className="text-lg font-bold text-slate-800 leading-none">เบิกค่าเดินทาง</h1>
-                            <span className="text-[10px] text-slate-400 uppercase font-bold tracking-widest tracking-tight">System v1.4.0 (Dynamic Rate)</span>
+                            <span className="text-[10px] text-slate-400 uppercase font-bold tracking-widest tracking-tight">System v1.4.1 (Fast Upload)</span>
                         </div>
                     </div>
 
@@ -255,7 +257,7 @@
                             </div>
 
                             <div>
-                                <label className="text-[10px] font-bold text-slate-400 mb-1 block uppercase">แนบรูปภาพประกอบ</label>
+                                <label className="text-[10px] font-bold text-slate-400 mb-1 block uppercase">แนบรูปภาพประกอบ (ระบบจะย่อขนาดอัตโนมัติ)</label>
                                 <div className="relative">
                                     <input type="file" accept="image/*" onChange={handleFileChange} className="hidden" id="file-input" />
                                     <label htmlFor="file-input" className="flex items-center justify-center gap-2 p-3 border-2 border-dashed border-slate-200 rounded-xl cursor-pointer hover:bg-slate-50 transition-all text-slate-500 text-sm">
