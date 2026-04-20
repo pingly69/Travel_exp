@@ -36,6 +36,7 @@
 
         const GAS_URL = "https://script.google.com/macros/s/AKfycbw9CvHT1NXH_o7Qmmd1Gnbikt4QKmtBO2jrC8VIF2a_cm5-WfLym0YpQYSbT2WiezUO/exec"; 
         const LIFF_ID = "2009016720-ddygK2Jx";
+
        
         const DELIVERY_FIX_RATE = 150; 
         const DEFAULT_FIX_RATE = 4;
@@ -190,9 +191,15 @@
                                 `👤 ผู้เบิก: ${payload.requester_name}\n` +
                                 `🚗 ทะเบียน: ${payload.license_plate}\n` +
                                 `📅 วันที่: ${payload.request_date}\n` +
-                                `🛣️ ระยะทาง: ${payload.distance_km} กม. (x ${currentFixRate}฿)\n` +
-                                `💰 ยอดสุทธิ: ${payload.total_amount.toLocaleString()} ฿\n` +
-                                `✅ ผู้อนุมัติ: ${payload.approver}`;
+                            `📍 Site งาน: ${payload.site_name}\n` +
+                            `📝 รายละเอียด: ${payload.travel_details}\n` +
+                            `🛣️ ระยะทาง: ${payload.distance_km} กม. (x ${currentFixRate}฿)\n` +
+                            `🎫 ค่าทางด่วน: ${payload.toll_fee} ฿\n` +
+                            `🅿️ ค่าที่จอด: ${payload.parking_fee} ฿\n` +
+                            `📦 ค่ารถ: ${deliveryFee} ฿\n` +
+                            `✅ ผู้อนุมัติ: ${payload.approver}\n` +
+                            `━━━━━━━━━━━━━━\n` +
+                            `💰 ยอดสุทธิ: ${payload.total_amount.toLocaleString()} ฿`;                                
                             try { await liff.sendMessages([{ type: 'text', text: summaryText }]); } catch (e) { }
                             liff.closeWindow();
                         } else { window.location.reload(); }
